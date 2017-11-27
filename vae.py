@@ -3,31 +3,35 @@ import matplotlib.pyplot as plt
 from torch.nn import functional as F
 from torch.autograd import Variable
 from torch import nn
+from skimage import color
 import numpy as np
 import utils
-import visdom
+
+np.random.seed(0)
+
+latent_space_size = 144
 
 class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
         
-        self.conv1 = nn.Conv2d(1, 192, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(192)
+        self.conv1 = nn.Conv2d(1, 256, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(256)
         
         self.max1 = nn.MaxPool2d(3)
     
-        self.conv2 = nn.Conv2d(192, 256, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(256)
+        self.conv2 = nn.Conv2d(256, 512, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(512)
         
         self.max2 = nn.MaxPool2d(3)
         
-        self.conv3 = nn.Conv2d(256, 512, 3, padding=1)
-        self.bn3 = nn.BatchNorm2d(512)
+        self.conv3 = nn.Conv2d(512, 1024, 3, padding=1)
+        self.bn3 = nn.BatchNorm2d(1024)
+
+        self.avg1 = nn.AvgPool2d(3)
         
-        self.avg3 = nn.AvgPool2d(3)
-        
-        self.fc_mu = nn.Linear(512, 96)
-        self.fc_sig = nn.Linear(512, 96)
+        self.fc_mu = nn.Linear(1024, latent_space_size)
+        self.fc_sig = nn.Linear(1024, latent_space_size)
         
     def forward(self, x):
         x = self.conv1(x)
@@ -46,7 +50,7 @@ class Encoder(nn.Module):
         x = self.bn3(x)
         x = F.relu(x)
 
-        x = self.avg3(x)
+        x = self.avg1(x)
 
         x = x.view(x.size(0), -1)
 
@@ -61,7 +65,7 @@ class Decoder(nn.Module):
     def __init__(self):
         super().__init__()
         
-        self.fc1 = nn.Linear(96, 32 * 32)
+        self.fc1 = nn.Linear(latent_space_size, 32 * 32)
         self.fc2 = nn.Linear(32 * 32, 48 * 48)
         
     def forward(self, z):
@@ -99,7 +103,7 @@ class VariationalAutoEncoder(nn.Module):
         xt = self.decoder(z)
 
         xt = xt.view(xt.size(0), 1, 48, 48)
-        
+
         return xt
 
 def latent_loss(mu, sigma):
@@ -109,47 +113,35 @@ def latent_loss(mu, sigma):
     return 0.5 * torch.mean(mu_sq + sig_sq - torch.log(sig_sq) - 1)
 
 if __name__ == '__main__':
-
     batch_size = 12
-    nb_batches = 300
+    nb_batches = 600
     epochs = 100
-
-    vis = visdom.Visdom()
 
     model = VariationalAutoEncoder()
 
-    adam = torch.optim.Adam(model.parameters(), lr=1e-4)
+    adam = torch.optim.Adam(model.parameters(), lr=1e-3)
     mse = nn.MSELoss()
-
-    gen = utils.batch_generator(8, 1)
-    X_test  = next(gen)
-    Xt = model(X_test)
-
-    pane_true = vis.images(X_test.data.numpy())
-    pane_pred = vis.images(Xt.data.numpy())
-    pane_log = vis.text("Starting Training")
 
     gen = utils.batch_generator(batch_size, nb_batches)
 
     for epoch in range(epochs):
         for batch in range(nb_batches):
-            X  = next(gen)
+            X, _  = next(gen)
             Xt = model(X)
 
-            loss = mse(Xt, X)# + latent_loss(model.mu, model.sigma)
-            
+            loss = mse(Xt, X) #+ latent_loss(model.mu, model.sigma)
+
             log = " ".join(["Epoch:", str(epoch),
                             "Batch:", str(batch),
                             "Loss:",  str(loss.data[0])])
 
-            vis.text(log, win=pane_log)
-            
+            print(log)
+
             adam.zero_grad()
             loss.backward()
             adam.step()
-            
-            Xt = model(X_test)
-            vis.images(Xt.data.numpy(), win=pane_pred)
+    
+        torch.save(model.state_dict(), 'weights/epoch.{}.th'.format(epoch))
 
-        torch.save(model.state_dict(), 'weights.{}.th'.format(epoch))
+    torch.save(model.state_dict(), 'weights/epoch.final.th'.format(epoch))
 

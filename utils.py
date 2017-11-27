@@ -27,7 +27,7 @@ def batch_generator(batch_size, nb_batches):
         X = torch.from_numpy(X)
         X = Variable(X)
             
-        yield X
+        yield X, batch
 
         batch_count += 1
         
